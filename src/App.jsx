@@ -1,0 +1,984 @@
+import { useState, useEffect } from 'react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Plus, List, Save, RefreshCw, Edit, MessageCircle, Trash2, Mic } from 'lucide-react';
+import { useSwipeable } from 'react-swipeable';
+
+export default function TaskManager() {
+  const [tasks, setTasks] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [newTask, setNewTask] = useState('');
+  const [newDueDate, setNewDueDate] = useState('');
+  const [newPriority, setNewPriority] = useState('');
+  const [newNote, setNewNote] = useState('');
+  const [showAddWindow, setShowAddWindow] = useState(false);
+  const [showListWindow, setShowListWindow] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState('');
+  const [loadingSuggestion, setLoadingSuggestion] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [savedLinks, setSavedLinks] = useState([]);
+  const [showCustomizePopup, setShowCustomizePopup] = useState(false);
+  const [showEditPopup, setShowEditPopup] = useState(false);
+  const [showAiLinksPopup, setShowAiLinksPopup] = useState(false);
+  const [customUrl, setCustomUrl] = useState('');
+  const [customDescription, setCustomDescription] = useState('');
+  const [celebrateTask, setCelebrateTask] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  
+  // Edit task states
+  const [editTask, setEditTask] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editNote, setEditNote] = useState('');
+  const [editCustomUrl, setEditCustomUrl] = useState('');
+  const [editCustomDescription, setEditCustomDescription] = useState('');
+
+  const swipeHandlers = useSwipeable({
+  onSwipedLeft: () => scrollTaskDown(),
+  onSwipedRight: () => scrollTaskUp(),
+  preventScrollOnSwipe: true,
+  trackMouse: true
+  });
+
+// Get user's location on component mount
+useEffect(() => {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        
+        // Reverse geocode to get city/country
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          );
+          const data = await response.json();
+          
+          const city = data.address.city || data.address.town || data.address.village || '';
+          const country = data.address.country || '';
+          
+          const location = city ? `${city}, ${country}` : country;
+          setUserLocation(location);
+          console.log('User location:', location);
+        } catch (error) {
+          console.error('Error getting location name:', error);
+          setUserLocation('Israel'); // fallback
+        }
+      },
+      (error) => {
+        console.error('Error getting location:', error);
+        setUserLocation('Israel'); // fallback if permission denied
+      }
+    );
+  }
+}, []);
+
+useEffect(() => {
+  const stored = localStorage.getItem('savedLinks');
+  if (stored) {
+    setSavedLinks(JSON.parse(stored));
+  }
+}, []);
+
+// Load tasks from localStorage on mount
+useEffect(() => {
+  const storedTasks = localStorage.getItem('tasks');
+  if (storedTasks) {
+    try {
+      const parsedTasks = JSON.parse(storedTasks);
+      setTasks(parsedTasks);
+    } catch (error) {
+      console.error('Error loading tasks:', error);
+    }
+  }
+}, []);
+
+// Save tasks to localStorage whenever they change
+useEffect(() => {
+  if (tasks.length > 0) {
+    localStorage.setItem('tasks', JSON.stringify(tasks));
+  }
+}, [tasks]);
+
+// Voice recognition for Hebrew
+const startVoiceRecognition = () => {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Voice recognition is not supported in your browser. Please try Chrome or Edge.');
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SpeechRecognition();
+  
+  recognition.lang = 'he-IL'; // Hebrew
+  recognition.continuous = false;
+  recognition.interimResults = false;
+
+  recognition.onstart = () => {
+    console.log('Voice recognition started');
+    setIsListening(true);
+  };
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    console.log('Transcript:', transcript);
+    setNewTask(transcript);
+    setIsListening(false);
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+    setIsListening(false);
+    
+    if (event.error === 'no-speech') {
+      alert('לא זוהה דיבור. אנא נסה שוב.');
+    } else if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+      alert('נדרשת הרשאה למיקרופון.\n\nלחץ על סמל המיקרופון בסרגל הכתובת ואפשר גישה.');
+    } else if (event.error === 'network') {
+      alert('שגיאת רשת. ודא שיש לך חיבור לאינטרנט.');
+    } else {
+      alert(`שגיאה: ${event.error}`);
+    }
+  };
+
+  recognition.onend = () => {
+    console.log('Voice recognition ended');
+    setIsListening(false);
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    console.error('Failed to start recognition:', error);
+    alert('לא ניתן להפעיל זיהוי קול. אנא בדוק את הגדרות הדפדפן.');
+    setIsListening(false);
+  }
+};
+
+  const addTask = async () => {
+  if (newTask.trim()) {
+    // Get AI-suggested priority position
+    let position = tasks.length;
+    
+    try {
+      const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/prioritize-task', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          taskTitle: newTask,
+          existingTasks: tasks,
+          userPriority: newPriority || null
+        }),
+      });
+      
+      const data = await response.json();
+      position = data.position - 1;
+    } catch (error) {
+      console.error('Error getting priority:', error);
+    }
+    
+    const newTaskObj = {
+      id: Date.now(),
+      title: newTask,
+      dueDate: newDueDate || null,
+      priority: newPriority || 'auto',
+      note: newNote || null,
+      savedLinks: []
+    };
+    
+    // Save quick link if provided
+    if (customUrl.trim()) {
+      newTaskObj.savedLinks.push({
+        id: Date.now(),
+        url: customUrl,
+        description: customDescription || new URL(customUrl).hostname
+      });
+    }
+    
+    const newTasks = [...tasks];
+    newTasks.splice(position, 0, newTaskObj);
+    setTasks(newTasks);
+    
+    setNewTask('');
+    setNewDueDate('');
+    setNewPriority('');
+    setNewNote('');
+    setCustomUrl('');
+    setCustomDescription('');
+    setShowAddWindow(false);
+  }
+};
+
+  const scrollTaskUp = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+      setAiSuggestion('');
+    }
+  };
+
+  const scrollTaskDown = () => {
+    if (currentIndex < tasks.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+      setAiSuggestion('');
+    }
+  };
+
+  const deleteTask = (index) => {
+  setCelebrateTask(true);
+  
+  setTimeout(() => {
+    const newTasks = tasks.filter((_, i) => i !== index);
+    setTasks(newTasks);
+    
+    // Clear localStorage if no tasks left
+    if (newTasks.length === 0) {
+      localStorage.removeItem('tasks');
+    }
+    
+    if (currentIndex >= newTasks.length && currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+    setCelebrateTask(false);
+  }, 1200);
+  };
+
+  const moveTaskInList = (index, direction) => {
+    if (direction === 'up' && index > 0) {
+      const newTasks = [...tasks];
+      [newTasks[index], newTasks[index - 1]] = [newTasks[index - 1], newTasks[index]];
+      setTasks(newTasks);
+      setCurrentIndex(currentIndex === index ? currentIndex - 1 : currentIndex === index - 1 ? currentIndex + 1 : currentIndex);
+    } else if (direction === 'down' && index < tasks.length - 1) {
+      const newTasks = [...tasks];
+      [newTasks[index], newTasks[index + 1]] = [newTasks[index + 1], newTasks[index]];
+      setTasks(newTasks);
+      setCurrentIndex(currentIndex === index ? currentIndex + 1 : currentIndex === index + 1 ? currentIndex - 1 : currentIndex);
+    }
+  };
+
+const getAILinks = async () => {
+  if (!currentTask) return;
+  
+  setLoadingSuggestion(true);
+  setShowAiLinksPopup(true);
+  
+  try {
+    const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/get-suggestion', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        taskTitle: currentTask.title,
+        dueDate: currentTask.dueDate,
+        priority: currentTask.priority,
+        userLocation: userLocation || 'Israel'
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to get links');
+    }
+
+    const data = await response.json();
+    
+    if (data.links && data.links.length > 0) {
+      setAiSuggestion(JSON.stringify(data.links));
+    }
+  } catch (error) {
+    console.error('Error getting AI links:', error);
+    setAiSuggestion('');
+  } finally {
+    setLoadingSuggestion(false);
+  }
+};
+
+const handleSaveAiLink = (link) => {
+  const newTasks = [...tasks];
+  const task = newTasks[currentIndex];
+  
+  if (!task.savedLinks) {
+    task.savedLinks = [];
+  }
+  
+  const newLink = {
+    id: Date.now(),
+    url: link.url,
+    description: link.description
+  };
+  
+  task.savedLinks.push(newLink);
+  setTasks(newTasks);
+  alert('Link saved to this task!');
+};
+
+const handleRemoveSavedLink = (linkId) => {
+  const newTasks = [...tasks];
+  const task = newTasks[currentIndex];
+  
+  if (task.savedLinks) {
+    task.savedLinks = task.savedLinks.filter(link => link.id !== linkId);
+    setTasks(newTasks);
+  }
+};
+
+const handleCustomizeLink = () => {
+  if (!customUrl) {
+    alert('Please enter a URL');
+    return;
+  }
+  
+  const description = customDescription || new URL(customUrl).hostname;
+  
+  const newTasks = [...tasks];
+  const task = newTasks[currentIndex];
+  
+  if (!task.savedLinks) {
+    task.savedLinks = [];
+  }
+  
+  const newLink = {
+    id: Date.now(),
+    url: customUrl,
+    description: description
+  };
+  
+  task.savedLinks.push(newLink);
+  setTasks(newTasks);
+  
+  setShowCustomizePopup(false);
+  setCustomUrl('');
+  setCustomDescription('');
+  alert('Custom link saved to this task!');
+};
+
+const handleRefreshLinks = async () => {
+  if (!currentTask) return;
+  
+  setLoadingSuggestion(true);
+  try {
+    const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/get-suggestion', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        taskTitle: currentTask.title + ' (provide NEW alternative suggestions)',
+        dueDate: currentTask.dueDate,
+        priority: currentTask.priority,
+        userLocation: userLocation || 'Israel'
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to get links');
+    }
+
+    const data = await response.json();
+    
+    if (data.links && data.links.length > 0) {
+      const newLinks = data.links.slice(0, 2);
+      const searchQuery = encodeURIComponent(currentTask.title);
+      newLinks.push({
+        url: `https://www.google.com/search?q=${searchQuery}`,
+        description: 'Search on Google',
+        source: 'fallback'
+      });
+      setAiSuggestion(JSON.stringify(newLinks));
+    }
+  } catch (error) {
+    console.error('Error refreshing links:', error);
+  } finally {
+    setLoadingSuggestion(false);
+  }
+};
+
+const handleOpenChat = () => {
+  const locationText = userLocation ? ` (I'm in ${userLocation})` : '';
+  const query = encodeURIComponent(`${currentTask.title}${locationText}`);
+  const perplexityUrl = `https://www.perplexity.ai/?q=${query}`;
+  window.open(perplexityUrl, '_blank');
+};
+
+const openEditPopup = () => {
+  if (!currentTask) return;
+  
+  setEditTask(currentTask.title);
+  setEditDueDate(currentTask.dueDate || '');
+  setEditNote(currentTask.note || '');
+  setEditCustomUrl('');
+  setEditCustomDescription('');
+  setShowEditPopup(true);
+};
+
+const saveTaskEdit = () => {
+  const newTasks = [...tasks];
+  const task = newTasks[currentIndex];
+  
+  task.title = editTask;
+  task.dueDate = editDueDate || null;
+  task.note = editNote || null;
+  
+  // Add new link if provided
+  if (editCustomUrl.trim()) {
+    if (!task.savedLinks) {
+      task.savedLinks = [];
+    }
+    task.savedLinks.push({
+      id: Date.now(),
+      url: editCustomUrl,
+      description: editCustomDescription || new URL(editCustomUrl).hostname
+    });
+  }
+  
+  setTasks(newTasks);
+  setShowEditPopup(false);
+  setEditTask('');
+  setEditDueDate('');
+  setEditNote('');
+  setEditCustomUrl('');
+  setEditCustomDescription('');
+};
+
+  const currentTask = tasks[currentIndex];
+  const priorityColors = {
+    high: 'text-red-600 bg-red-50',
+    medium: 'text-yellow-600 bg-yellow-50',
+    low: 'text-green-600 bg-green-50',
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
+      <div className="max-w-2xl mx-auto">
+
+        {tasks.length > 0 ? (
+          <div {...swipeHandlers} className="bg-white rounded-lg shadow-md p-8 pt-16 mb-8 relative">
+            <div className="absolute top-6 left-6">
+              <p className="text-3xl font-bold text-slate-900">{currentIndex + 1}</p>
+            </div>
+            <div className="absolute top-6 right-6 flex gap-2">
+              <button
+                onClick={openEditPopup}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => deleteTask(currentIndex)}
+                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition"
+                disabled={celebrateTask}
+              >
+                Done
+                {celebrateTask && (
+                  <>
+                    <span className="sparkle" style={{ top: '-10px', left: '10px', animationDelay: '0s' }}>✨</span>
+                    <span className="sparkle" style={{ top: '5px', right: '5px', animationDelay: '0.2s' }}>⭐</span>
+                    <span className="sparkle" style={{ bottom: '0px', left: '15px', animationDelay: '0.4s' }}>✨</span>
+                    <span className="sparkle" style={{ top: '-5px', right: '15px', animationDelay: '0.6s' }}>⭐</span>
+                 </>
+                )}
+              </button>
+            </div>
+            <h2 className="text-3xl font-bold text-slate-900 mb-4 text-center mt-4">{currentTask.title}</h2>
+            {currentTask.dueDate && (
+              <p className="text-slate-600 text-center mb-2">Due: {new Date(currentTask.dueDate).toLocaleDateString()}</p>
+            )}
+            {currentTask.note && (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 rounded">
+                <p className="text-slate-700 whitespace-pre-wrap">{currentTask.note}</p>
+              </div>
+            )}
+            
+            {/* Saved Links Section */}
+            {currentTask.savedLinks && currentTask.savedLinks.length > 0 && (
+              <div className="mb-6">
+                <p className="text-sm font-semibold text-slate-700 mb-2">Saved Links:</p>
+                <div className="space-y-2">
+                  {currentTask.savedLinks.map((link) => {
+                    const hasHebrew = /[\u0590-\u05FF]/.test(link.description);
+                    return (
+                      <div key={link.id} className="flex items-center gap-2">
+                        <a 
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`flex-1 block bg-blue-50 hover:bg-blue-100 text-blue-800 font-medium py-2 px-4 rounded-lg border border-blue-300 transition ${hasHebrew ? 'text-right' : ''}`}
+                          style={hasHebrew ? { direction: 'rtl' } : {}}
+                        >
+                          {link.description}
+                        </a>
+                        <button
+                          onClick={() => handleRemoveSavedLink(link.id)}
+                          className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"
+                          title="Remove saved link"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-6">
+              <div className="text-center">
+                <button
+                  onClick={getAILinks}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition"
+                >
+                  Quick Links
+                </button>
+              </div>
+            </div>
+            
+            <div className="text-center">
+              <button
+                onClick={() => setShowCustomizePopup(true)}
+                className="text-slate-600 hover:text-slate-800 text-sm underline"
+              >
+                + Add custom link
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg shadow-md p-12 text-center mb-8">
+            <p className="text-slate-500 text-lg">No tasks yet. Add one to get started!</p>
+          </div>
+        )}
+
+        <div className="flex gap-4 justify-center">
+          <button
+            onClick={() => setShowAddWindow(!showAddWindow)}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg"
+          >
+            <Plus size={24} />
+          </button>
+          <button
+            onClick={() => setShowListWindow(!showListWindow)}
+            className="bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg"
+          >
+            <List size={24} />
+          </button>
+        </div>
+
+        {/* Add Task Window */}
+        {showAddWindow && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-2xl font-semibold text-slate-900">New Task</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={addTask}
+            disabled={!newTask.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2 px-6 rounded-lg transition"
+          >
+            Add
+          </button>
+          <button
+            onClick={() => {
+              setShowAddWindow(false);
+              setNewTask('');
+              setNewDueDate('');
+              setNewPriority('');
+              setNewNote('');
+              setCustomUrl('');
+              setCustomDescription('');
+            }}
+            className="text-slate-500 hover:text-slate-700 p-2 rounded transition"
+          >
+            <X size={24} />
+          </button>
+        </div>
+      </div>
+      <div className="space-y-4">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Task description"
+            value={newTask}
+            onChange={(e) => setNewTask(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && newTask.trim() && addTask()}
+            className="w-full px-4 py-2 pr-12 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            autoFocus
+          />
+          <button
+            onClick={startVoiceRecognition}
+            disabled={isListening}
+            className={`absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full transition ${
+              isListening 
+                ? 'bg-red-500 text-white animate-pulse' 
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+            }`}
+            title="הקלט קולי"
+          >
+            <Mic size={20} />
+          </button>
+        </div>
+        {isListening && (
+          <p className="text-sm text-red-600 text-center">מאזין...</p>
+        )}
+        <input
+          type="date"
+          value={newDueDate}
+          onChange={(e) => setNewDueDate(e.target.value)}
+          placeholder="Date due (optional)"
+          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-600"
+        />
+        <select
+          value={newPriority}
+          onChange={(e) => setNewPriority(e.target.value)}
+          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="">Let AI decide priority</option>
+          <option value="low">Low Priority</option>
+          <option value="medium">Medium Priority</option>
+          <option value="high">High Priority</option>
+        </select>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Note (optional)</label>
+          <textarea
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            placeholder="Add any notes or details about this task..."
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Quick Link (optional)</label>
+          <input
+            type="url"
+            value={customUrl}
+            onChange={(e) => setCustomUrl(e.target.value)}
+            placeholder="https://example.com"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {customUrl && (
+            <input
+              type="text"
+              value={customDescription}
+              onChange={(e) => setCustomDescription(e.target.value)}
+              placeholder="Link description (optional)"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mt-2"
+            />
+          )}
+          <p className="text-xs text-slate-500 mt-1">Add a helpful link for this task</p>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Edit Task Popup */}
+{showEditPopup && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <h2 className="text-2xl font-semibold text-slate-900 mb-4">Edit Task</h2>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Task Name</label>
+          <input
+            type="text"
+            placeholder="Task description"
+            value={editTask}
+            onChange={(e) => setEditTask(e.target.value)}
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Due Date</label>
+          <input
+            type="date"
+            value={editDueDate}
+            onChange={(e) => setEditDueDate(e.target.value)}
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Note</label>
+          <textarea
+            value={editNote}
+            onChange={(e) => setEditNote(e.target.value)}
+            placeholder="Add any notes or details about this task..."
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 resize-none"
+          />
+        </div>
+        
+        {/* Current Saved Links */}
+        {currentTask.savedLinks && currentTask.savedLinks.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Current Links</label>
+            <div className="space-y-2">
+              {currentTask.savedLinks.map((link) => (
+                <div key={link.id} className="flex items-center gap-2">
+                  <div className="flex-1 bg-slate-50 text-slate-700 py-2 px-3 rounded border border-slate-200 text-sm truncate">
+                    {link.description}
+                  </div>
+                  <button
+                    onClick={() => handleRemoveSavedLink(link.id)}
+                    className="p-2 text-red-600 hover:bg-red-100 rounded transition"
+                    title="Remove link"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Add New Link */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Add New Link (optional)</label>
+          <input
+            type="url"
+            value={editCustomUrl}
+            onChange={(e) => setEditCustomUrl(e.target.value)}
+            placeholder="https://example.com"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {editCustomUrl && (
+            <input
+              type="text"
+              value={editCustomDescription}
+              onChange={(e) => setEditCustomDescription(e.target.value)}
+              placeholder="Link description (optional)"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mt-2"
+            />
+          )}
+        </div>
+        
+        <div className="flex gap-3 pt-2">
+          <button
+            onClick={saveTaskEdit}
+            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg transition"
+          >
+            Save Changes
+          </button>
+          <button
+            onClick={() => {
+              setShowEditPopup(false);
+              setEditTask('');
+              setEditDueDate('');
+              setEditNote('');
+              setEditCustomUrl('');
+              setEditCustomDescription('');
+            }}
+            className="flex-1 bg-slate-300 hover:bg-slate-400 text-slate-900 font-semibold py-2 rounded-lg transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Custom Link Popup */}
+{showCustomizePopup && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full">
+      <h2 className="text-2xl font-semibold text-slate-900 mb-4">Add Custom Link</h2>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">URL *</label>
+          <input
+            type="url"
+            value={customUrl}
+            onChange={(e) => setCustomUrl(e.target.value)}
+            placeholder="https://example.com"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Description (optional)</label>
+          <input
+            type="text"
+            value={customDescription}
+            onChange={(e) => setCustomDescription(e.target.value)}
+            placeholder="Leave empty to use website name"
+            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleCustomizeLink}
+            className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 rounded-lg transition"
+          >
+            Save
+          </button>
+          <button
+            onClick={() => {
+              setShowCustomizePopup(false);
+              setCustomUrl('');
+              setCustomDescription('');
+            }}
+            className="flex-1 bg-slate-300 hover:bg-slate-400 text-slate-900 font-semibold py-2 rounded-lg transition"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* AI Links Popup */}
+{showAiLinksPopup && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-2xl font-semibold text-slate-900">Quick Links</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={handleRefreshLinks}
+            className="p-2 text-purple-600 hover:bg-purple-100 rounded transition"
+            title="Get new suggestions"
+          >
+            <RefreshCw size={20} />
+          </button>
+          <button
+            onClick={handleOpenChat}
+            className="p-2 text-purple-600 hover:bg-purple-100 rounded transition"
+            title="Chat with AI about this task"
+          >
+            <MessageCircle size={20} />
+          </button>
+          <button
+            onClick={() => {
+              setShowAiLinksPopup(false);
+              setAiSuggestion('');
+            }}
+            className="text-slate-500 hover:text-slate-700 p-2 rounded transition"
+          >
+            <X size={24} />
+          </button>
+        </div>
+      </div>
+      
+      {loadingSuggestion ? (
+        <div className="flex items-center justify-center gap-2 text-slate-600 py-8">
+          <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+          <span>Finding helpful links...</span>
+        </div>
+      ) : aiSuggestion ? (
+        <div className="space-y-2">
+          {JSON.parse(aiSuggestion).map((link, idx) => {
+            const hasHebrew = /[\u0590-\u05FF]/.test(link.description);
+            
+            return (
+              <div key={idx} className="flex items-center gap-2">
+                <a 
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`flex-1 block bg-purple-50 hover:bg-purple-100 text-purple-800 font-medium py-3 px-4 rounded-lg border border-purple-300 transition ${hasHebrew ? 'text-right' : ''}`}
+                  style={hasHebrew ? { direction: 'rtl' } : {}}
+                >
+                  {link.description}
+                </a>
+                <button
+                  onClick={() => handleSaveAiLink(link)}
+                  className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg transition"
+                  title="Save this link to task"
+                >
+                  <Save size={18} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-slate-500 text-center py-8">No suggestions available</p>
+      )}
+    </div>
+  </div>
+)}
+
+{/* Task List Window */}
+{showListWindow && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] flex flex-col relative">
+      <div className="flex justify-between items-center p-6 pb-4 border-b border-slate-200">
+        <h2 className="text-2xl font-semibold text-slate-900">All Tasks</h2>
+        <button
+          onClick={() => setShowListWindow(false)}
+          className="text-slate-500 hover:text-slate-700 p-1 rounded transition"
+        >
+          <X size={24} />
+        </button>
+      </div>
+      <div className="overflow-y-auto p-6 pt-4 flex-1">
+        {tasks.length > 0 ? (
+          <div className="space-y-2 mb-4">
+            {tasks.map((task, idx) => (
+              <div
+                key={task.id}
+                className={`p-3 rounded-lg transition flex items-center gap-2 ${
+                  idx === currentIndex
+                    ? 'bg-blue-100 border-2 border-blue-600'
+                    : 'bg-slate-50 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveTaskInList(idx, 'up');
+                    }}
+                    disabled={idx === 0}
+                    className="p-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded transition"
+                  >
+                    <ChevronUp size={16} className="text-slate-900" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveTaskInList(idx, 'down');
+                    }}
+                    disabled={idx === tasks.length - 1}
+                    className="p-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded transition"
+                  >
+                    <ChevronDown size={16} className="text-slate-900" />
+                  </button>
+                </div>
+                <div
+                  onClick={() => {
+                    setCurrentIndex(idx);
+                    setShowListWindow(false);
+                  }}
+                  className="flex-1 min-w-0 cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-slate-600">{idx + 1}.</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-900 truncate">{task.title}</p>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteTask(idx);
+                  }}
+                  className="p-1 text-red-600 hover:bg-red-100 rounded transition"
+                  title="Delete task"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-slate-500 mb-4">No tasks yet.</p>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+      </div>
+    </div>
+  );
+}
