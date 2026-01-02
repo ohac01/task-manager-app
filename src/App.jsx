@@ -22,6 +22,8 @@ export default function TaskManager() {
   const [customDescription, setCustomDescription] = useState('');
   const [celebrateTask, setCelebrateTask] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isListeningNote, setIsListeningNote] = useState(false);
+  const [isPrioritizing, setIsPrioritizing] = useState(false);
   
   // Edit task states
   const [editTask, setEditTask] = useState('');
@@ -152,35 +154,103 @@ const startVoiceRecognition = () => {
   }
 };
 
+// Voice recognition for notes (Hebrew)
+const startNoteVoiceRecognition = () => {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('Voice recognition is not supported in your browser. Please try Chrome or Edge.');
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SpeechRecognition();
+  
+  recognition.lang = 'he-IL'; // Hebrew
+  recognition.continuous = false;
+  recognition.interimResults = false;
+
+  recognition.onstart = () => {
+    console.log('Note voice recognition started');
+    setIsListeningNote(true);
+  };
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    console.log('Note transcript:', transcript);
+    // Append to existing note with a space if there's already text
+    setNewNote(prev => prev ? prev + ' ' + transcript : transcript);
+    setIsListeningNote(false);
+  };
+
+  recognition.onerror = (event) => {
+    console.error('Speech recognition error:', event.error);
+    setIsListeningNote(false);
+    
+    if (event.error === 'no-speech') {
+      alert('לא זוהה דיבור. אנא נסה שוב.');
+    } else if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+      alert('נדרשת הרשאה למיקרופון.\n\nלחץ על סמל המיקרופון בסרגל הכתובת ואפשר גישה.');
+    } else if (event.error === 'network') {
+      alert('שגיאת רשת. ודא שיש לך חיבור לאינטרנט.');
+    } else {
+      alert(`שגיאה: ${event.error}`);
+    }
+  };
+
+  recognition.onend = () => {
+    console.log('Note voice recognition ended');
+    setIsListeningNote(false);
+  };
+
+  try {
+    recognition.start();
+  } catch (error) {
+    console.error('Failed to start recognition:', error);
+    alert('לא ניתן להפעיל זיהוי קול. אנא בדוק את הגדרות הדפדפן.');
+    setIsListeningNote(false);
+  }
+};
+
   const addTask = async () => {
   if (newTask.trim()) {
-    // Get AI-suggested priority position
-    let position = tasks.length;
+    let position = 0; // Default to top
     
-    try {
-      const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/prioritize-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          taskTitle: newTask,
-          existingTasks: tasks,
-          userPriority: newPriority || null
-        }),
-      });
-      
-      const data = await response.json();
-      position = data.position - 1;
-    } catch (error) {
-      console.error('Error getting priority:', error);
+    // Only call AI if user explicitly chose "Let AI decide"
+    if (newPriority === 'ai') {
+      try {
+        const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/prioritize-task', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            taskTitle: newTask,
+            existingTasks: tasks,
+            userPriority: null
+          }),
+        });
+        
+        const data = await response.json();
+        position = data.position - 1;
+      } catch (error) {
+        console.error('Error getting priority:', error);
+        position = 0; // Fallback to top
+      }
+    } else if (newPriority === 'high' || !newPriority) {
+      // High priority or no selection -> top
+      position = 0;
+    } else if (newPriority === 'medium') {
+      // Medium priority -> middle
+      position = Math.floor(tasks.length / 2);
+    } else if (newPriority === 'low') {
+      // Low priority -> bottom
+      position = tasks.length;
     }
     
     const newTaskObj = {
       id: Date.now(),
       title: newTask,
       dueDate: newDueDate || null,
-      priority: newPriority || 'auto',
+      priority: newPriority || 'none',
       note: newNote || null,
       savedLinks: []
     };
@@ -205,6 +275,38 @@ const startVoiceRecognition = () => {
     setCustomUrl('');
     setCustomDescription('');
     setShowAddWindow(false);
+  }
+};
+
+const prioritizeAllTasks = async () => {
+  if (tasks.length === 0) return;
+  
+  setIsPrioritizing(true);
+  
+  try {
+    const response = await fetch('https://task-manager-backend-5wt0.onrender.com/api/prioritize-list', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tasks: tasks
+      }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to prioritize tasks');
+    }
+    
+    const data = await response.json();
+    setTasks(data.prioritizedTasks);
+    setCurrentIndex(0);
+    alert('Tasks have been prioritized!');
+  } catch (error) {
+    console.error('Error prioritizing tasks:', error);
+    alert('Failed to prioritize tasks. Please try again.');
+  } finally {
+    setIsPrioritizing(false);
   }
 };
 
@@ -628,21 +730,39 @@ const saveTaskEdit = () => {
         <select
           value={newPriority}
           onChange={(e) => setNewPriority(e.target.value)}
-          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-600"
         >
-          <option value="">Let AI decide priority</option>
-          <option value="low">Low Priority</option>
-          <option value="medium">Medium Priority</option>
+          <option value="">Choose priority (optional)</option>
           <option value="high">High Priority</option>
+          <option value="medium">Medium Priority</option>
+          <option value="low">Low Priority</option>
+          <option value="ai">Let AI decide priority</option>
         </select>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Note (optional)</label>
-          <textarea
-            value={newNote}
-            onChange={(e) => setNewNote(e.target.value)}
-            placeholder="Add any notes or details about this task..."
-            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 resize-none"
-          />
+          <div className="relative">
+            <textarea
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              placeholder="Add any notes or details about this task..."
+              className="w-full px-4 py-2 pr-12 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 resize-none"
+            />
+            <button
+              onClick={startNoteVoiceRecognition}
+              disabled={isListeningNote}
+              className={`absolute right-2 top-2 p-2 rounded-full transition ${
+                isListeningNote 
+                  ? 'bg-red-500 text-white animate-pulse' 
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+              }`}
+              title="הקלט קולי"
+            >
+              <Mic size={18} />
+            </button>
+          </div>
+          {isListeningNote && (
+            <p className="text-sm text-red-600 mt-1">מאזין...</p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Quick Link (optional)</label>
@@ -903,12 +1023,28 @@ const saveTaskEdit = () => {
     <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] flex flex-col relative">
       <div className="flex justify-between items-center p-6 pb-4 border-b border-slate-200">
         <h2 className="text-2xl font-semibold text-slate-900">All Tasks</h2>
-        <button
-          onClick={() => setShowListWindow(false)}
-          className="text-slate-500 hover:text-slate-700 p-1 rounded transition"
-        >
-          <X size={24} />
-        </button>
+        <div className="flex gap-2 items-center">
+          <button
+            onClick={prioritizeAllTasks}
+            disabled={isPrioritizing || tasks.length === 0}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition text-sm flex items-center gap-2"
+          >
+            {isPrioritizing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>Prioritizing...</span>
+              </>
+            ) : (
+              'Prioritize'
+            )}
+          </button>
+          <button
+            onClick={() => setShowListWindow(false)}
+            className="text-slate-500 hover:text-slate-700 p-1 rounded transition"
+          >
+            <X size={24} />
+          </button>
+        </div>
       </div>
       <div className="overflow-y-auto p-6 pt-4 flex-1">
         {tasks.length > 0 ? (
