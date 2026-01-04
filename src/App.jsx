@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Plus, List, Save, RefreshCw, Edit, MessageCircle, Trash2, Mic } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Plus, List, Save, RefreshCw, Edit, MessageCircle, Trash2, Mic } from 'lucide-react';
 import { useSwipeable } from 'react-swipeable';
 
 export default function TaskManager() {
@@ -24,6 +24,11 @@ export default function TaskManager() {
   const [isListening, setIsListening] = useState(false);
   const [isListeningNote, setIsListeningNote] = useState(false);
   const [isPrioritizing, setIsPrioritizing] = useState(false);
+  const [streakCount, setStreakCount] = useState(0);
+  const [showStreakCelebration, setShowStreakCelebration] = useState(false);
+  const [celebrationMessage, setCelebrationMessage] = useState('');
+  const [draggedTaskIndex, setDraggedTaskIndex] = useState(null);
+  const [touchStartY, setTouchStartY] = useState(null);
   
   // Edit task states
   const [editTask, setEditTask] = useState('');
@@ -98,6 +103,27 @@ useEffect(() => {
     localStorage.setItem('tasks', JSON.stringify(tasks));
   }
 }, [tasks]);
+
+// Load and check streak on mount
+useEffect(() => {
+  const savedStreak = localStorage.getItem('streakCount');
+  const lastCompleted = localStorage.getItem('lastCompletedDate');
+  
+  if (savedStreak && lastCompleted) {
+    const today = new Date().toDateString();
+    const lastDate = new Date(lastCompleted).toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    
+    // If last completed was today or yesterday, keep streak
+    if (lastDate === today || lastDate === yesterday) {
+      setStreakCount(parseInt(savedStreak));
+    } else {
+      // Streak broken - reset to 0
+      setStreakCount(0);
+      localStorage.setItem('streakCount', '0');
+    }
+  }
+}, []);
 
 // Voice recognition for Hebrew
 const startVoiceRecognition = () => {
@@ -327,6 +353,45 @@ const prioritizeAllTasks = async () => {
   const deleteTask = (index) => {
   setCelebrateTask(true);
   
+  // Update streak (only when deleting from main task display)
+  const today = new Date().toDateString();
+  const lastCompleted = localStorage.getItem('lastCompletedDate');
+  const lastCompletedDate = lastCompleted ? new Date(lastCompleted).toDateString() : null;
+  const yesterday = new Date(Date.now() - 86400000).toDateString();
+  
+  let newStreak = 1;
+  
+  if (lastCompletedDate === today) {
+    // Already completed a task today, keep current streak
+    newStreak = streakCount;
+  } else if (lastCompletedDate === yesterday) {
+    // Completed yesterday, increment streak
+    newStreak = streakCount + 1;
+  } else {
+    // Streak broken or first task ever, start at 1
+    newStreak = 1;
+  }
+  
+  // Save streak data
+  localStorage.setItem('streakCount', newStreak.toString());
+  localStorage.setItem('lastCompletedDate', new Date().toISOString());
+  setStreakCount(newStreak);
+  
+  // Check for milestones and show celebration
+  if (newStreak === 7) {
+    setCelebrationMessage('Week Warrior! 🎉');
+    setShowStreakCelebration(true);
+    setTimeout(() => setShowStreakCelebration(false), 3000);
+  } else if (newStreak === 30) {
+    setCelebrationMessage('Month Master! 🏆');
+    setShowStreakCelebration(true);
+    setTimeout(() => setShowStreakCelebration(false), 3000);
+  } else if (newStreak === 100) {
+    setCelebrationMessage('Century Superstar! ⭐');
+    setShowStreakCelebration(true);
+    setTimeout(() => setShowStreakCelebration(false), 3000);
+  }
+  
   setTimeout(() => {
     const newTasks = tasks.filter((_, i) => i !== index);
     setTasks(newTasks);
@@ -356,6 +421,93 @@ const prioritizeAllTasks = async () => {
       setCurrentIndex(currentIndex === index ? currentIndex + 1 : currentIndex === index + 1 ? currentIndex - 1 : currentIndex);
     }
   };
+
+const handleDragStart = (index) => {
+  setDraggedTaskIndex(index);
+};
+
+const handleDragOver = (e) => {
+  e.preventDefault(); // Allow drop
+};
+
+const handleDrop = (dropIndex) => {
+  if (draggedTaskIndex === null || draggedTaskIndex === dropIndex) return;
+  
+  const newTasks = [...tasks];
+  const [draggedTask] = newTasks.splice(draggedTaskIndex, 1);
+  newTasks.splice(dropIndex, 0, draggedTask);
+  
+  setTasks(newTasks);
+  
+  // Update currentIndex if needed
+  if (currentIndex === draggedTaskIndex) {
+    setCurrentIndex(dropIndex);
+  } else if (draggedTaskIndex < currentIndex && dropIndex >= currentIndex) {
+    setCurrentIndex(currentIndex - 1);
+  } else if (draggedTaskIndex > currentIndex && dropIndex <= currentIndex) {
+    setCurrentIndex(currentIndex + 1);
+  }
+  
+  setDraggedTaskIndex(null);
+};
+
+const handleDragEnd = () => {
+  setDraggedTaskIndex(null);
+};
+
+// Touch handlers for mobile
+const handleTouchStart = (e, index) => {
+  setDraggedTaskIndex(index);
+  setTouchStartY(e.touches[0].clientY);
+};
+
+const handleTouchMove = (e) => {
+  if (draggedTaskIndex === null || touchStartY === null) return;
+  
+  e.preventDefault(); // Prevent scrolling while dragging
+  
+  const touchY = e.touches[0].clientY;
+  const target = document.elementFromPoint(e.touches[0].clientX, touchY);
+  
+  // Remove previous highlights
+  document.querySelectorAll('[data-task-index]').forEach(item => {
+    item.classList.remove('ring-2', 'ring-blue-400');
+  });
+  
+  // Find the task item element
+  const taskItem = target?.closest('[data-task-index]');
+  if (taskItem) {
+    const dropIndex = parseInt(taskItem.getAttribute('data-task-index'));
+    if (dropIndex !== draggedTaskIndex) {
+      // Visual feedback - highlight drop target
+      taskItem.classList.add('ring-2', 'ring-blue-400');
+    }
+  }
+};
+
+const handleTouchEnd = (e) => {
+  if (draggedTaskIndex === null) return;
+  
+  const touchY = e.changedTouches[0].clientY;
+  const target = document.elementFromPoint(e.changedTouches[0].clientX, touchY);
+  
+  // Find the task item element
+  const taskItem = target?.closest('[data-task-index]');
+  if (taskItem) {
+    const dropIndex = parseInt(taskItem.getAttribute('data-task-index'));
+    if (dropIndex !== draggedTaskIndex) {
+      handleDrop(dropIndex);
+    }
+  }
+  
+  setDraggedTaskIndex(null);
+  setTouchStartY(null);
+  
+  // Clean up visual feedback
+  document.querySelectorAll('[data-task-index]').forEach(item => {
+    item.classList.remove('bg-blue-50');
+  });
+};
 
 const getAILinks = async () => {
   if (!currentTask) return;
@@ -549,11 +701,39 @@ const saveTaskEdit = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
-      <div className="max-w-2xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
+      {/* Streak Banner - Fixed Top */}
+      {streakCount > 0 && (
+        <div className={`w-full py-3 px-8 text-center font-bold text-lg shadow-md ${
+          streakCount >= 100 
+            ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-yellow-500 text-white animate-pulse' 
+            : streakCount >= 30 
+            ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white'
+            : streakCount >= 7 
+            ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white'
+            : 'bg-gradient-to-r from-orange-400 to-orange-500 text-white'
+        }`}>
+          🔥 {streakCount} Day Streak!
+        </div>
+      )}
+      
+      {/* Celebration Overlay */}
+      {showStreakCelebration && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
+          <div className="bg-white rounded-lg shadow-2xl p-8 animate-bounce">
+            <p className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600">
+              {celebrationMessage}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content - Flexible Space */}
+      <div className="flex-1 flex items-center justify-center px-8 py-4 overflow-hidden">
+        <div className="max-w-2xl w-full h-full flex flex-col">
 
         {tasks.length > 0 ? (
-          <div {...swipeHandlers} className="bg-white rounded-lg shadow-md p-8 pt-16 mb-8 relative">
+          <div {...swipeHandlers} className="bg-white rounded-lg shadow-md p-8 pt-16 relative flex-1 flex flex-col justify-around overflow-y-auto">
             <div className="absolute top-6 left-6">
               <p className="text-3xl font-bold text-slate-900">{currentIndex + 1}</p>
             </div>
@@ -643,25 +823,30 @@ const saveTaskEdit = () => {
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-lg shadow-md p-12 text-center mb-8">
+          <div className="bg-white rounded-lg shadow-md p-12 text-center flex-1 flex items-center justify-center">
             <p className="text-slate-500 text-lg">No tasks yet. Add one to get started!</p>
           </div>
         )}
+        </div>
+      </div>
 
+      {/* Bottom Buttons - Fixed */}
+      <div className="w-full py-6 pb-8 bg-gradient-to-br from-slate-50 to-slate-100">
         <div className="flex gap-4 justify-center">
           <button
             onClick={() => setShowAddWindow(!showAddWindow)}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg shadow-lg"
           >
             <Plus size={24} />
           </button>
           <button
             onClick={() => setShowListWindow(!showListWindow)}
-            className="bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg"
+            className="bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-8 rounded-lg flex items-center gap-2 transition text-lg shadow-lg"
           >
             <List size={24} />
           </button>
         </div>
+      </div>
 
         {/* Add Task Window */}
         {showAddWindow && (
@@ -1052,46 +1237,46 @@ const saveTaskEdit = () => {
             {tasks.map((task, idx) => (
               <div
                 key={task.id}
-                className={`p-3 rounded-lg transition flex items-center gap-2 ${
+                data-task-index={idx}
+                draggable
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  handleDragStart(idx);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleDragOver(e);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleDrop(idx);
+                }}
+                onDragEnd={handleDragEnd}
+                onTouchStart={(e) => handleTouchStart(e, idx)}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                className={`p-3 rounded-lg transition flex items-center gap-3 cursor-move touch-none ${
                   idx === currentIndex
                     ? 'bg-blue-100 border-2 border-blue-600'
+                    : draggedTaskIndex === idx
+                    ? 'bg-slate-200 border-2 border-slate-400 opacity-50'
                     : 'bg-slate-50 border border-slate-200 hover:bg-slate-100'
                 }`}
               >
-                <div className="flex gap-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      moveTaskInList(idx, 'up');
-                    }}
-                    disabled={idx === 0}
-                    className="p-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded transition"
-                  >
-                    <ChevronUp size={16} className="text-slate-900" />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      moveTaskInList(idx, 'down');
-                    }}
-                    disabled={idx === tasks.length - 1}
-                    className="p-1 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed rounded transition"
-                  >
-                    <ChevronDown size={16} className="text-slate-900" />
-                  </button>
-                </div>
                 <div
                   onClick={() => {
-                    setCurrentIndex(idx);
-                    setShowListWindow(false);
+                    if (draggedTaskIndex === null) {
+                      setCurrentIndex(idx);
+                      setShowListWindow(false);
+                    }
                   }}
-                  className="flex-1 min-w-0 cursor-pointer"
+                  className="flex-1 min-w-0 cursor-pointer flex items-center gap-3"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold text-slate-600">{idx + 1}.</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-slate-900 truncate">{task.title}</p>
-                    </div>
+                  <span className="font-bold text-slate-600">{idx + 1}.</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-slate-900 truncate">{task.title}</p>
                   </div>
                 </div>
                 <button
@@ -1099,7 +1284,7 @@ const saveTaskEdit = () => {
                     e.stopPropagation();
                     deleteTask(idx);
                   }}
-                  className="p-1 text-red-600 hover:bg-red-100 rounded transition"
+                  className="p-1 text-red-600 hover:bg-red-100 rounded transition flex-shrink-0"
                   title="Delete task"
                 >
                   <Trash2 size={18} />
@@ -1114,7 +1299,6 @@ const saveTaskEdit = () => {
     </div>
   </div>
 )}
-      </div>
     </div>
   );
 }
