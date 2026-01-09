@@ -135,16 +135,25 @@ const startVoiceRecognition = () => {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognition = new SpeechRecognition();
   
-  recognition.lang = 'he-IL'; // Hebrew
+  recognition.lang = 'he-IL';
   recognition.continuous = false;
   recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  let timeoutId;
 
   recognition.onstart = () => {
     console.log('Voice recognition started');
     setIsListening(true);
+    
+    // Auto-stop after 5 seconds
+    timeoutId = setTimeout(() => {
+      recognition.stop();
+    }, 5000);
   };
 
   recognition.onresult = (event) => {
+    clearTimeout(timeoutId);
     const transcript = event.results[0][0].transcript;
     console.log('Transcript:', transcript);
     setNewTask(transcript);
@@ -152,6 +161,7 @@ const startVoiceRecognition = () => {
   };
 
   recognition.onerror = (event) => {
+    clearTimeout(timeoutId);
     console.error('Speech recognition error:', event.error);
     setIsListening(false);
     
@@ -161,12 +171,11 @@ const startVoiceRecognition = () => {
       alert('נדרשת הרשאה למיקרופון.\n\nלחץ על סמל המיקרופון בסרגל הכתובת ואפשר גישה.');
     } else if (event.error === 'network') {
       alert('שגיאת רשת. ודא שיש לך חיבור לאינטרנט.');
-    } else {
-      alert(`שגיאה: ${event.error}`);
     }
   };
 
   recognition.onend = () => {
+    clearTimeout(timeoutId);
     console.log('Voice recognition ended');
     setIsListening(false);
   };
@@ -190,16 +199,25 @@ const startNoteVoiceRecognition = () => {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognition = new SpeechRecognition();
   
-  recognition.lang = 'he-IL'; // Hebrew
+  recognition.lang = 'he-IL';
   recognition.continuous = false;
   recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  let timeoutId;
 
   recognition.onstart = () => {
     console.log('Note voice recognition started');
     setIsListeningNote(true);
+    
+    // Auto-stop after 5 seconds
+    timeoutId = setTimeout(() => {
+      recognition.stop();
+    }, 5000);
   };
 
   recognition.onresult = (event) => {
+    clearTimeout(timeoutId);
     const transcript = event.results[0][0].transcript;
     console.log('Note transcript:', transcript);
     // Append to existing note with a space if there's already text
@@ -208,6 +226,7 @@ const startNoteVoiceRecognition = () => {
   };
 
   recognition.onerror = (event) => {
+    clearTimeout(timeoutId);
     console.error('Speech recognition error:', event.error);
     setIsListeningNote(false);
     
@@ -217,12 +236,11 @@ const startNoteVoiceRecognition = () => {
       alert('נדרשת הרשאה למיקרופון.\n\nלחץ על סמל המיקרופון בסרגל הכתובת ואפשר גישה.');
     } else if (event.error === 'network') {
       alert('שגיאת רשת. ודא שיש לך חיבור לאינטרנט.');
-    } else {
-      alert(`שגיאה: ${event.error}`);
     }
   };
 
   recognition.onend = () => {
+    clearTimeout(timeoutId);
     console.log('Note voice recognition ended');
     setIsListeningNote(false);
   };
@@ -469,18 +487,27 @@ const handleTouchMove = (e) => {
   const touchY = e.touches[0].clientY;
   const target = document.elementFromPoint(e.touches[0].clientX, touchY);
   
-  // Remove previous highlights
-  document.querySelectorAll('[data-task-index]').forEach(item => {
-    item.classList.remove('ring-2', 'ring-blue-400');
+  // Remove previous highlights from all numbers
+  document.querySelectorAll('[data-task-index] .task-number').forEach(item => {
+    item.classList.remove('bg-blue-500', 'text-white', 'scale-125');
   });
   
-  // Find the task item element
+  // Always highlight the dragged task number (in its original position)
+  const draggedElement = document.querySelector(`[data-task-index="${draggedTaskIndex}"] .task-number`);
+  if (draggedElement) {
+    draggedElement.classList.add('bg-blue-500', 'text-white', 'scale-125');
+  }
+  
+  // Find the task item element under touch
   const taskItem = target?.closest('[data-task-index]');
   if (taskItem) {
     const dropIndex = parseInt(taskItem.getAttribute('data-task-index'));
     if (dropIndex !== draggedTaskIndex) {
-      // Visual feedback - highlight drop target
-      taskItem.classList.add('ring-2', 'ring-blue-400');
+      // Also highlight the drop target number
+      const numberElement = taskItem.querySelector('.task-number');
+      if (numberElement) {
+        numberElement.classList.add('bg-blue-500', 'text-white', 'scale-125');
+      }
     }
   }
 };
@@ -503,9 +530,9 @@ const handleTouchEnd = (e) => {
   setDraggedTaskIndex(null);
   setTouchStartY(null);
   
-  // Clean up visual feedback
-  document.querySelectorAll('[data-task-index]').forEach(item => {
-    item.classList.remove('bg-blue-50');
+  // Clean up ALL highlights after drop
+  document.querySelectorAll('[data-task-index] .task-number').forEach(item => {
+    item.classList.remove('bg-blue-500', 'text-white', 'scale-125');
   });
 };
 
@@ -1258,10 +1285,8 @@ const saveTaskEdit = () => {
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
                 className={`p-3 rounded-lg transition flex items-center gap-3 cursor-move touch-none ${
-                  idx === currentIndex
-                    ? 'bg-blue-100 border-2 border-blue-600'
-                    : draggedTaskIndex === idx
-                    ? 'bg-slate-200 border-2 border-slate-400 opacity-50'
+                  draggedTaskIndex === idx
+                    ? 'opacity-30 bg-slate-400 border-2 border-slate-500 scale-95'
                     : 'bg-slate-50 border border-slate-200 hover:bg-slate-100'
                 }`}
               >
@@ -1274,7 +1299,9 @@ const saveTaskEdit = () => {
                   }}
                   className="flex-1 min-w-0 cursor-pointer flex items-center gap-3"
                 >
-                  <span className="font-bold text-slate-600">{idx + 1}.</span>
+                  <span className="task-number font-bold text-slate-600 transition-all duration-200 rounded px-2 py-1">
+                   {idx + 1}.
+                  </span>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-slate-900 truncate">{task.title}</p>
                   </div>
