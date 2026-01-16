@@ -25,6 +25,7 @@ export default function TaskManager() {
   const [isListeningNote, setIsListeningNote] = useState(false);
   const [isPrioritizing, setIsPrioritizing] = useState(false);
   const [streakCount, setStreakCount] = useState(0);
+  const [taskCount, setTaskCount] = useState(0);
   const [showStreakCelebration, setShowStreakCelebration] = useState(false);
   const [celebrationMessage, setCelebrationMessage] = useState('');
   const [draggedTaskIndex, setDraggedTaskIndex] = useState(null);
@@ -107,6 +108,7 @@ useEffect(() => {
 // Load and check streak on mount
 useEffect(() => {
   const savedStreak = localStorage.getItem('streakCount');
+  const savedTaskCount = localStorage.getItem('taskCount');
   const lastCompleted = localStorage.getItem('lastCompletedDate');
   
   if (savedStreak && lastCompleted) {
@@ -114,13 +116,16 @@ useEffect(() => {
     const lastDate = new Date(lastCompleted).toDateString();
     const yesterday = new Date(Date.now() - 86400000).toDateString();
     
-    // If last completed was today or yesterday, keep streak
+    // If last completed was today or yesterday, keep streak and task count
     if (lastDate === today || lastDate === yesterday) {
       setStreakCount(parseInt(savedStreak));
+      setTaskCount(parseInt(savedTaskCount) || 0);
     } else {
-      // Streak broken - reset to 0
+      // Streak broken - reset both to 0
       setStreakCount(0);
+      setTaskCount(0);
       localStorage.setItem('streakCount', '0');
+      localStorage.setItem('taskCount', '0');
     }
   }
 }, []);
@@ -371,13 +376,14 @@ const prioritizeAllTasks = async () => {
   const deleteTask = (index) => {
   setCelebrateTask(true);
   
-  // Update streak (only when deleting from main task display)
+  // Update streak and task count (only when deleting from main task display)
   const today = new Date().toDateString();
   const lastCompleted = localStorage.getItem('lastCompletedDate');
   const lastCompletedDate = lastCompleted ? new Date(lastCompleted).toDateString() : null;
   const yesterday = new Date(Date.now() - 86400000).toDateString();
   
   let newStreak = 1;
+  let newTaskCount = taskCount + 1; // Always increment task count
   
   if (lastCompletedDate === today) {
     // Already completed a task today, keep current streak
@@ -386,14 +392,17 @@ const prioritizeAllTasks = async () => {
     // Completed yesterday, increment streak
     newStreak = streakCount + 1;
   } else {
-    // Streak broken or first task ever, start at 1
+    // Streak broken or first task ever, start at 1 and reset task count
     newStreak = 1;
+    newTaskCount = 1;
   }
   
-  // Save streak data
+  // Save streak and task count data
   localStorage.setItem('streakCount', newStreak.toString());
+  localStorage.setItem('taskCount', newTaskCount.toString());
   localStorage.setItem('lastCompletedDate', new Date().toISOString());
   setStreakCount(newStreak);
+  setTaskCount(newTaskCount);
   
   // Check for milestones and show celebration
   if (newStreak === 7) {
@@ -498,7 +507,7 @@ const handleTouchMove = (e) => {
     draggedElement.classList.add('bg-blue-500', 'text-white', 'scale-125');
   }
   
-  // Find the task item element under touch
+  // Find the closest task item under touch
   const taskItem = target?.closest('[data-task-index]');
   if (taskItem) {
     const dropIndex = parseInt(taskItem.getAttribute('data-task-index'));
@@ -515,6 +524,11 @@ const handleTouchMove = (e) => {
 const handleTouchEnd = (e) => {
   if (draggedTaskIndex === null) return;
   
+  // Clean up ALL highlights FIRST before doing anything else
+  document.querySelectorAll('[data-task-index] .task-number').forEach(item => {
+    item.classList.remove('bg-blue-500', 'text-white', 'scale-125');
+  });
+  
   const touchY = e.changedTouches[0].clientY;
   const target = document.elementFromPoint(e.changedTouches[0].clientX, touchY);
   
@@ -529,11 +543,6 @@ const handleTouchEnd = (e) => {
   
   setDraggedTaskIndex(null);
   setTouchStartY(null);
-  
-  // Clean up ALL highlights after drop
-  document.querySelectorAll('[data-task-index] .task-number').forEach(item => {
-    item.classList.remove('bg-blue-500', 'text-white', 'scale-125');
-  });
 };
 
 const getAILinks = async () => {
@@ -731,7 +740,7 @@ const saveTaskEdit = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col">
       {/* Streak Banner - Fixed Top */}
       {streakCount > 0 && (
-        <div className={`w-full py-3 px-8 text-center font-bold text-lg shadow-md ${
+        <div className={`w-full py-3 px-8 flex shadow-md ${
           streakCount >= 100 
             ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-yellow-500 text-white animate-pulse' 
             : streakCount >= 30 
@@ -740,7 +749,12 @@ const saveTaskEdit = () => {
             ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white'
             : 'bg-gradient-to-r from-orange-400 to-orange-500 text-white'
         }`}>
-          🔥 {streakCount} Day Streak!
+          <div className="w-1/2 flex justify-center items-center text-lg">
+            🔥 <span className="font-extrabold text-2xl mx-1">{streakCount}</span> Day Streak
+          </div>
+          <div className="w-1/2 flex justify-center items-center text-lg">
+            <span className="font-extrabold text-2xl mr-1">{taskCount}</span> Tasks ✓
+          </div>
         </div>
       )}
       
@@ -1231,11 +1245,10 @@ const saveTaskEdit = () => {
 
 {/* Task List Window */}
 {showListWindow && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-    <div className="bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] flex flex-col relative">
-      <div className="flex justify-between items-center p-6 pb-4 border-b border-slate-200">
-        <h2 className="text-2xl font-semibold text-slate-900">All Tasks</h2>
-        <div className="flex gap-2 items-center">
+  <div className="fixed inset-0 bg-white z-50 flex flex-col">
+    <div className="flex justify-between items-center p-6 pb-4 border-b border-slate-200 bg-white">
+      <h2 className="text-2xl font-semibold text-slate-900">All Tasks</h2>
+      <div className="flex gap-2 items-center">
           <button
             onClick={prioritizeAllTasks}
             disabled={isPrioritizing || tasks.length === 0}
@@ -1265,31 +1278,36 @@ const saveTaskEdit = () => {
               <div
                 key={task.id}
                 data-task-index={idx}
-                draggable
-                onDragStart={(e) => {
-                  e.stopPropagation();
-                  handleDragStart(idx);
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleDragOver(e);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleDrop(idx);
-                }}
-                onDragEnd={handleDragEnd}
-                onTouchStart={(e) => handleTouchStart(e, idx)}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                className={`p-3 rounded-lg transition flex items-center gap-3 cursor-move touch-none ${
+                className={`p-3 rounded-lg transition flex items-center gap-3 ${
                   draggedTaskIndex === idx
-                    ? 'opacity-30 bg-slate-400 border-2 border-slate-500 scale-95'
+                    ? 'opacity-50 bg-slate-300 border-2 border-slate-400'
                     : 'bg-slate-50 border border-slate-200 hover:bg-slate-100'
                 }`}
               >
+                <span 
+                  className="task-number font-bold text-slate-600 transition-all duration-200 rounded px-2 py-1 cursor-move touch-none"
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    handleDragStart(idx);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDragOver(e);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleDrop(idx);
+                  }}
+                  onDragEnd={handleDragEnd}
+                  onTouchStart={(e) => handleTouchStart(e, idx)}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                >
+                  {idx + 1}.
+                </span>
                 <div
                   onClick={() => {
                     if (draggedTaskIndex === null) {
@@ -1297,14 +1315,9 @@ const saveTaskEdit = () => {
                       setShowListWindow(false);
                     }
                   }}
-                  className="flex-1 min-w-0 cursor-pointer flex items-center gap-3"
+                  className="flex-1 min-w-0 cursor-pointer"
                 >
-                  <span className="task-number font-bold text-slate-600 transition-all duration-200 rounded px-2 py-1">
-                   {idx + 1}.
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-slate-900 truncate">{task.title}</p>
-                  </div>
+                  <p className="font-medium text-slate-900 truncate">{task.title}</p>
                 </div>
                 <button
                   onClick={(e) => {
@@ -1323,7 +1336,6 @@ const saveTaskEdit = () => {
           <p className="text-slate-500 mb-4">No tasks yet.</p>
         )}
       </div>
-    </div>
   </div>
 )}
     </div>
